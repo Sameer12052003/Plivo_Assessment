@@ -1,6 +1,8 @@
 import json
 import argparse
+import os
 from collections import defaultdict
+from datetime import datetime
 from labels import label_is_pii
 
 
@@ -36,6 +38,24 @@ def compute_prf(tp, fp, fn):
     return prec, rec, f1
 
 
+def save_results(results_dict):
+    os.makedirs("Results", exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = f"Results/metrics_{ts}.json"
+    txt_path = f"Results/metrics_{ts}.txt"
+
+    # Save JSON
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(results_dict, f, indent=4)
+
+    # Save pretty text file
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(results_dict["pretty_output"])
+
+    print(f"\nSaved results to:\n  {json_path}\n  {txt_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gold", required=True)
@@ -67,19 +87,26 @@ def main():
             if span not in p_spans:
                 fn[span[2]] += 1
 
-    print("Per-entity metrics:")
+    # Collect metrics for saving
+    pretty = []
+    metrics = {"per_entity": {}}
+
+    pretty.append("Per-entity metrics:")
     macro_f1_sum = 0.0
     macro_count = 0
 
     for lab in sorted(labels):
         p, r, f1 = compute_prf(tp[lab], fp[lab], fn[lab])
-        print(f"{lab:15s} P={p:.3f} R={r:.3f} F1={f1:.3f}")
+        pretty.append(f"{lab:15s} P={p:.3f} R={r:.3f} F1={f1:.3f}")
+        metrics["per_entity"][lab] = {"precision": p, "recall": r, "f1": f1}
         macro_f1_sum += f1
         macro_count += 1
 
     macro_f1 = macro_f1_sum / max(1, macro_count)
-    print(f"\nMacro-F1: {macro_f1:.3f}")
+    pretty.append(f"\nMacro-F1: {macro_f1:.3f}")
+    metrics["macro_f1"] = macro_f1
 
+    # PII and NON-PII metrics
     pii_tp = pii_fp = pii_fn = 0
     non_tp = non_fp = non_fn = 0
 
@@ -111,9 +138,21 @@ def main():
                 non_fn += 1
 
     p, r, f1 = compute_prf(pii_tp, pii_fp, pii_fn)
-    print(f"\nPII-only metrics: P={p:.3f} R={r:.3f} F1={f1:.3f}")
+    pretty.append(f"\nPII-only metrics: P={p:.3f} R={r:.3f} F1={f1:.3f}")
+    metrics["pii"] = {"precision": p, "recall": r, "f1": f1}
+
     p2, r2, f12 = compute_prf(non_tp, non_fp, non_fn)
-    print(f"Non-PII metrics: P={p2:.3f} R={r2:.3f} F1={f12:.3f}")
+    pretty.append(f"Non-PII metrics: P={p2:.3f} R={r2:.3f} F1={f12:.3f}")
+    metrics["non_pii"] = {"precision": p2, "recall": r2, "f1": f12}
+
+    # Save pretty output
+    metrics["pretty_output"] = "\n".join(pretty)
+
+    # Print to console
+    print("\n".join(pretty))
+
+    # Save files
+    save_results(metrics)
 
 
 if __name__ == "__main__":

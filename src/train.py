@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+from datetime import datetime
 
 from dataset import PIIDataset, collate_batch
 from labels import LABELS
@@ -26,10 +27,23 @@ def parse_args():
 
 def main():
     args = parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Create timestamped output directory
+    # ------------------------------------------------------------------
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = os.path.join(args.out_dir, f"checkpoint_{timestamp}")
+    os.makedirs(save_dir, exist_ok=True)
+    print(f"Saving checkpoints in: {save_dir}")
+    # ------------------------------------------------------------------
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    train_ds = PIIDataset(args.train, tokenizer, LABELS, max_length=args.max_length, is_train=True)
+
+    train_ds = PIIDataset(
+        args.train, tokenizer, LABELS,
+        max_length=args.max_length,
+        is_train=True
+    )
 
     train_dl = DataLoader(
         train_ds,
@@ -45,17 +59,24 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     total_steps = len(train_dl) * args.epochs
     scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=int(0.1 * total_steps), num_training_steps=total_steps
+        optimizer,
+        num_warmup_steps=int(0.1 * total_steps),
+        num_training_steps=total_steps
     )
 
     for epoch in range(args.epochs):
         running_loss = 0.0
         for batch in tqdm(train_dl, desc=f"Epoch {epoch+1}/{args.epochs}"):
+
             input_ids = torch.tensor(batch["input_ids"], device=args.device)
             attention_mask = torch.tensor(batch["attention_mask"], device=args.device)
             labels = torch.tensor(batch["labels"], device=args.device)
 
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
             loss = outputs.loss
 
             optimizer.zero_grad()
@@ -68,9 +89,12 @@ def main():
         avg_loss = running_loss / max(1, len(train_dl))
         print(f"Epoch {epoch+1} average loss: {avg_loss:.4f}")
 
-    model.save_pretrained(args.out_dir)
-    tokenizer.save_pretrained(args.out_dir)
-    print(f"Saved model + tokenizer to {args.out_dir}")
+    # ---------------------------------------------------------
+    # Save checkpoint to timestamped directory
+    # ---------------------------------------------------------
+    model.save_pretrained(save_dir)
+    tokenizer.save_pretrained(save_dir)
+    print(f"Saved model + tokenizer to {save_dir}")
 
 
 if __name__ == "__main__":
